@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from glob import glob
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generator, TypeVar
 
 import pathspec
@@ -798,17 +800,13 @@ class BuilderConfig:
     @property
     def vcs_exclusion_files(self) -> dict[str, list[str]]:
         if self.__vcs_exclusion_files is None:
-            exclusion_files: dict[str, list[str]] = {'git': [], 'hg': []}
-
-            local_gitignore = locate_file(self.root, '.gitignore')
-            if local_gitignore is not None:
-                exclusion_files['git'].append(local_gitignore)
-
-            local_hgignore = locate_file(self.root, '.hgignore')
-            if local_hgignore is not None:
-                exclusion_files['hg'].append(local_hgignore)
-
-            self.__vcs_exclusion_files = exclusion_files
+            self.__vcs_exclusion_files: dict[str, list[str]] = {
+                # git permits .gitignore files in any subdirectory
+                'git': list(glob(os.path.join(self.root, '**', '.gitignore'))),
+                # hg permits .hgignore files in the root, but with manual inclusions
+                # of subdirectory .hgignores
+                'hg': list(glob(os.path.join(self.root, '.hgignore'))),
+            }
 
         return self.__vcs_exclusion_files
 
@@ -817,8 +815,15 @@ class BuilderConfig:
 
         # https://git-scm.com/docs/gitignore#_pattern_format
         for exclusion_file in self.vcs_exclusion_files['git']:
+            subdir = str(Path(exclusion_file).parent.relative_to(self.root))
+            subdir = '' if subdir == '.' else f'{subdir}/'
+
             with open(exclusion_file, encoding='utf-8') as f:
-                patterns.extend(f.readlines())
+                patterns.extend([
+                    subdir + line.rstrip()
+                    for line in f.readlines()
+                    if line and not line.startswith('#')
+                ])
 
         # https://linux.die.net/man/5/hgignore
         for exclusion_file in self.vcs_exclusion_files['hg']:
